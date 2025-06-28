@@ -1996,17 +1996,34 @@ def normalize_url(href, base_url):
     """Normalize URLs to ensure consistent format"""
     from urllib.parse import urljoin, urlparse
 
+    # Handle None or empty values
+    if not href:
+        return base_url
+
     # Parse base URL to get components
     parsed_base = urlparse(base_url)
     if not parsed_base.scheme or not parsed_base.netloc:
         raise ValueError(f"Invalid base URL format: {base_url}")
 
-    # Ensure base_url ends with a trailing slash if it's a directory path
-    if not base_url.endswith('/'):
+    # Special handling for HTML files as base URLs
+    if base_url.endswith(".html"):
+        # For HTML files, we use the directory as the base
+        parts = base_url.split('/')
+        base_url = '/'.join(parts[:-1]) + '/'
+    elif not parsed_base.path.endswith('/') and '.' not in parsed_base.path.split('/')[-1]:
         base_url = base_url + '/'
 
+    # Strip whitespace and handle special characters in href
+    cleaned_href = href.strip()
+
     # Use urljoin to handle all cases
-    normalized = urljoin(base_url, href.strip())
+    normalized = urljoin(base_url, cleaned_href)
+
+    # Validate the resulting URL has proper structure
+    parsed_result = urlparse(normalized)
+    if not parsed_result.scheme or not parsed_result.netloc:
+        raise ValueError(f"Resulting URL is invalid: {normalized}")
+
     return normalized
 
 
