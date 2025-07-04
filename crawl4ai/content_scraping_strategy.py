@@ -316,7 +316,7 @@ class WebScrapingStrategy(ContentScrapingStrategy):
             else:
                 tbody_rows = all_rows
                 
-        for row in tbody_rows:        
+        for row in tbody_rows:
         # for row in table.select('tr:not(:has(ancestor::thead))'):
             row_data = []
             for cell in row.select('td'):
@@ -917,7 +917,7 @@ class WebScrapingStrategy(ContentScrapingStrategy):
                 self._log("error", f"Error with target element detection: {str(e)}", "SCRAPE")
                 return None
         else:
-            content_element = body     
+            content_element = body
 
         kwargs["exclude_social_media_domains"] = set(
             kwargs.get("exclude_social_media_domains", []) + SOCIAL_MEDIA_DOMAINS
@@ -1310,6 +1310,10 @@ class LXMLWebScrapingStrategy(WebScrapingStrategy):
             if el.tag in bypass_tags:
                 continue
 
+            # Skip span elements that are inside <pre> tags
+            if el.tag =="span" and (el.xpath("ancestor::pre") or el.xpath("ancestor::code")):
+                continue
+
             text_content = (el.text_content() or "").strip()
             if (
                 len(text_content.split()) < word_count_threshold
@@ -1616,7 +1620,7 @@ class LXMLWebScrapingStrategy(WebScrapingStrategy):
 
             # Generate output HTML
             cleaned_html = lhtml.tostring(
-                # body,   
+                # body,
                 content_element,
                 encoding="unicode",
                 pretty_print=True,

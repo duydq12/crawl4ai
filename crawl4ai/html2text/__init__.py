@@ -1043,6 +1043,8 @@ class CustomHTML2Text(HTML2Text):
         self.preserved_content = []
         self.preserve_depth = 0
         self.handle_code_in_pre = handle_code_in_pre
+        self.mathjax = False
+        self.tex_mark = "$"
 
         # Configuration options
         self.skip_internal_links = False
@@ -1068,7 +1070,108 @@ class CustomHTML2Text(HTML2Text):
             else:
                 setattr(self, key, value)
 
+    def handle_mathjax(self, tag, attrs, start):
+        """
+        Handle MathJax container tags recursively to extract mathematical content and convert to LaTeX.
+        """
+        # Handle mjx-container
+        if tag == "mjx-container":
+            if start:
+                self.mathjax = True
+                self.stack_tags = []
+                self.math_stack = []
+                self.math_content = []
+                self.o(self.tex_mark + " ")  # Open math environment (e.g., $)
+            else:
+                # Output all collected math content
+                if self.math_content:
+                    self.o("".join(self.math_content))
+                self.o(" " + self.tex_mark)  # Close math environment (e.g., $)
+                self.mathjax = False
+                self.stack_tags = []
+                self.math_stack = []
+                self.math_content = []
+            return True
+
+        # Skip structural MathML container tags
+        if tag in ["mjx-assistive-mml", "math"]:
+            return True
+
+        # Process MathML tags inside mjx-container
+        if self.mathjax:
+            if start:
+                self.stack_tags.append(tag)
+                if tag in ["mfrac", "msqrt", "msub", "msup", "mrow", "mtable", "mtr", "mtd"]:
+                    self.math_stack.append(self.math_content)
+                    self.math_content = []
+            else:
+                if tag in self.stack_tags:
+                    self.stack_tags.remove(tag)
+
+                    if tag == "mfrac":
+                        if len(self.math_content) >= 2:
+                            numerator, denominator = self.math_content[:2]
+                            result = f"\\frac{{{numerator}}}{{{denominator}}}"
+                            self.math_content = self.math_stack.pop() if self.math_stack else []
+                            self.math_content.append(result)
+
+                    elif tag == "msqrt":
+                        if self.math_content:
+                            content = "".join(self.math_content)
+                            result = f"\\sqrt{{{content}}}"
+                            self.math_content = self.math_stack.pop() if self.math_stack else []
+                            self.math_content.append(result)
+
+                    elif tag == "msub":
+                        if len(self.math_content) >= 2:
+                            base, subscript = self.math_content[:2]
+                            result = f"{{{base}}}_{{{subscript}}}"
+                            self.math_content = self.math_stack.pop() if self.math_stack else []
+                            self.math_content.append(result)
+
+                    elif tag == "msup":
+                        if len(self.math_content) >= 2:
+                            base, superscript = self.math_content[:2]
+                            result = f"{{{base}}}^{{{superscript}}}"
+                            self.math_content = self.math_stack.pop() if self.math_stack else []
+                            self.math_content.append(result)
+
+                    elif tag == "mrow":
+                        content = "".join(self.math_content)
+                        if len(self.math_content) > 1 or tag in self.stack_tags:
+                            content = f"{{{content}}}"
+                        self.math_content = self.math_stack.pop() if self.math_stack else []
+                        self.math_content.append(content)
+
+                    elif tag == "mtable":
+                        # Convert rows to LaTeX matrix
+                        rows = self.math_content
+                        latex_rows = [" & ".join(row.split("|")) for row in rows if row]
+                        result = "\\begin{pmatrix}\n" + " \\\\ \n".join(latex_rows) + "\n\\end{pmatrix}"
+                        self.math_content = self.math_stack.pop() if self.math_stack else []
+                        self.math_content.append(result)
+
+                    elif tag == "mtr":
+                        # Join cells with | for processing in mtable
+                        content = "|".join(self.math_content)
+                        self.math_content = self.math_stack.pop() if self.math_stack else []
+                        self.math_content.append(content)
+
+                    elif tag == "mtd":
+                        # Join cell content
+                        content = "".join(self.math_content)
+                        self.math_content = self.math_stack.pop() if self.math_stack else []
+                        self.math_content.append(content)
+
+            return True
+        return False
+
     def handle_tag(self, tag, attrs, start):
+        # First try to handle MathJax tags
+        if tag == "mjx-container" or self.mathjax:
+            if self.handle_mathjax(tag, attrs, start):
+                return
+
         # Handle preserved tags
         if tag in self.preserve_tags:
             if start:
@@ -1104,6 +1207,10 @@ class CustomHTML2Text(HTML2Text):
                 self.preserved_content.append(f"</{tag}>")
             return
 
+        # Skip anchor tags when inside code or pre blocks
+        if tag == "a" and (self.inside_pre or self.inside_code):
+            return
+
         # Handle pre tags
         if tag == "pre":
             if start:
@@ -1127,12 +1234,23 @@ class CustomHTML2Text(HTML2Text):
 
             # If inside a link, let the parent class handle the content
             if self.inside_link:
-                super().handle_tag(tag, attrs, start) 
+                super().handle_tag(tag, attrs, start)
         else:
             super().handle_tag(tag, attrs, start)
 
     def handle_data(self, data, entity_char=False):
-        """Override handle_data to capture content within preserved tags."""
+        if self.mathjax:
+            data = data.strip()
+            if not data:
+                return
+
+            current_tag = self.stack_tags[-1] if self.stack_tags else None
+
+            if current_tag in ["mo", "mi", "mn", "mfrac", "msqrt", "msub", "msup", "mrow", "mtable", "mtr", "mtd"]:
+                self.math_content.append(data)
+            return
+
+        # Handle preserved tags
         if self.preserve_depth > 0:
             self.preserved_content.append(data)
             return
