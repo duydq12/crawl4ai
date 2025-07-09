@@ -1045,6 +1045,10 @@ class CustomHTML2Text(HTML2Text):
         self.handle_code_in_pre = handle_code_in_pre
         self.mathjax = False
         self.tex_mark = "$"
+        self.div_stack = []
+        self.div_has_header = []
+        self.inside_div = False
+        self.skip_content = False
 
         # Configuration options
         self.skip_internal_links = False
@@ -1059,6 +1063,7 @@ class CustomHTML2Text(HTML2Text):
         self.escape_plus = False
         self.escape_dash = False
         self.escape_snob = False
+        self.remove_furniture = False
 
     def update_params(self, **kwargs):
         """Update parameters and set preserved tags."""
@@ -1207,6 +1212,50 @@ class CustomHTML2Text(HTML2Text):
                 self.preserved_content.append(f"</{tag}>")
             return
 
+        # Handle div tags
+        if tag in ["div", "footer"] and self.remove_furniture:
+            if start:
+                self.inside_div = True
+                self.div_stack.append(attrs)
+                # Start with no header assumption
+                self.div_has_header.append(False)
+                self.skip_content = not any(self.div_has_header) if self.div_stack else False
+                return
+            else:
+                if self.div_stack:
+                    self.div_stack.pop()
+                    has_header = self.div_has_header.pop() if self.div_has_header else False
+                    
+                    # Update skip_content based on remaining divs
+                    self.skip_content = not any(self.div_has_header) if self.div_stack else False
+                    
+                    # Only add paragraph break if div had a header
+                    if has_header:
+                        if self.google_doc:
+                            if self.tag_stack and google_has_height(self.tag_stack[-1][2]):
+                                self.p()
+                            else:
+                                self.soft_br()
+                        elif self.astack:
+                            pass
+                        elif self.split_next_td:
+                            pass
+                        else:
+                            self.p()
+                
+                self.inside_div = len(self.div_stack) > 0
+                return
+
+        # Mark current div and all ancestors as containing a header
+        if hn(tag) and self.div_stack:
+            for i in range(len(self.div_has_header)):
+                self.div_has_header[i] = True
+            self.skip_content = not any(self.div_has_header)  # Allow content when header is found
+        
+        # Skip content if we're in a div without header
+        if self.skip_content and self.inside_div:
+            return
+
         # Skip anchor tags when inside code or pre blocks
         if tag == "a" and (self.inside_pre or self.inside_code):
             return
@@ -1214,7 +1263,7 @@ class CustomHTML2Text(HTML2Text):
         # Handle pre tags
         if tag == "pre":
             if start:
-                self.o("```\n")  # Markdown code block start
+                self.o("\n```\n")  # Markdown code block start
                 self.inside_pre = True
             else:
                 self.o("\n```\n")  # Markdown code block end
@@ -1250,9 +1299,13 @@ class CustomHTML2Text(HTML2Text):
                 self.math_content.append(data)
             return
 
-        # Handle preserved tags
+        """Override handle_data to capture content within preserved tags."""
         if self.preserve_depth > 0:
             self.preserved_content.append(data)
+            return
+
+        # Skip content if we're in a div without header
+        if self.skip_content and self.inside_div and self.remove_furniture:
             return
 
         if self.inside_pre:
