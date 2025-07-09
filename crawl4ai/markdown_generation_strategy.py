@@ -187,6 +187,7 @@ class DefaultMarkdownGenerator(MarkdownGenerationStrategy):
                 "single_line_break": True,
                 "mark_code": True,
                 "escape_snob": False,
+                "remove_furniture": True,  # Remove unnecessary HTML furniture
             }
 
             # Update with custom options if provided

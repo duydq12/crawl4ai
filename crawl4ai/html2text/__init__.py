@@ -1044,7 +1044,11 @@ class CustomHTML2Text(HTML2Text):
         self.handle_code_in_pre = handle_code_in_pre
         self.mathjax = False
         self.tex_mark = "$"
-        
+        self.div_stack = []
+        self.div_has_header = []
+        self.inside_div = False
+        self.skip_content = False
+
         # Configuration options
         self.skip_internal_links = False
         self.single_line_break = False
@@ -1058,6 +1062,7 @@ class CustomHTML2Text(HTML2Text):
         self.escape_plus = False
         self.escape_dash = False
         self.escape_snob = False
+        self.remove_furniture = False
 
     def update_params(self, **kwargs):
         """Update parameters and set preserved tags."""
@@ -1068,7 +1073,7 @@ class CustomHTML2Text(HTML2Text):
                 self.handle_code_in_pre = value
             else:
                 setattr(self, key, value)
-    
+
     def handle_mathjax(self, tag, attrs, start):
         """
         Handle MathJax container tags recursively to extract mathematical content and convert to LaTeX.
@@ -1091,11 +1096,11 @@ class CustomHTML2Text(HTML2Text):
                 self.math_stack = []
                 self.math_content = []
             return True
-        
+
         # Skip structural MathML container tags
         if tag in ["mjx-assistive-mml", "math"]:
             return True
-        
+
         # Process MathML tags inside mjx-container
         if self.mathjax:
             if start:
@@ -1113,35 +1118,35 @@ class CustomHTML2Text(HTML2Text):
                             result = f"\\frac{{{numerator}}}{{{denominator}}}"
                             self.math_content = self.math_stack.pop() if self.math_stack else []
                             self.math_content.append(result)
-                    
+
                     elif tag == "msqrt":
                         if self.math_content:
                             content = "".join(self.math_content)
                             result = f"\\sqrt{{{content}}}"
                             self.math_content = self.math_stack.pop() if self.math_stack else []
                             self.math_content.append(result)
-                    
+
                     elif tag == "msub":
                         if len(self.math_content) >= 2:
                             base, subscript = self.math_content[:2]
                             result = f"{{{base}}}_{{{subscript}}}"
                             self.math_content = self.math_stack.pop() if self.math_stack else []
                             self.math_content.append(result)
-                    
+
                     elif tag == "msup":
                         if len(self.math_content) >= 2:
                             base, superscript = self.math_content[:2]
                             result = f"{{{base}}}^{{{superscript}}}"
                             self.math_content = self.math_stack.pop() if self.math_stack else []
                             self.math_content.append(result)
-                    
+
                     elif tag == "mrow":
                         content = "".join(self.math_content)
                         if len(self.math_content) > 1 or tag in self.stack_tags:
                             content = f"{{{content}}}"
                         self.math_content = self.math_stack.pop() if self.math_stack else []
                         self.math_content.append(content)
-                    
+
                     elif tag == "mtable":
                         # Convert rows to LaTeX matrix
                         rows = self.math_content
@@ -1149,19 +1154,19 @@ class CustomHTML2Text(HTML2Text):
                         result = "\\begin{pmatrix}\n" + " \\\\ \n".join(latex_rows) + "\n\\end{pmatrix}"
                         self.math_content = self.math_stack.pop() if self.math_stack else []
                         self.math_content.append(result)
-                    
+
                     elif tag == "mtr":
                         # Join cells with | for processing in mtable
                         content = "|".join(self.math_content)
                         self.math_content = self.math_stack.pop() if self.math_stack else []
                         self.math_content.append(content)
-                    
+
                     elif tag == "mtd":
                         # Join cell content
                         content = "".join(self.math_content)
                         self.math_content = self.math_stack.pop() if self.math_stack else []
                         self.math_content.append(content)
-      
+
             return True
         return False
 
@@ -1170,7 +1175,7 @@ class CustomHTML2Text(HTML2Text):
         if tag == "mjx-container" or self.mathjax:
             if self.handle_mathjax(tag, attrs, start):
                 return
-        
+
         # Handle preserved tags
         if tag in self.preserve_tags:
             if start:
@@ -1206,6 +1211,50 @@ class CustomHTML2Text(HTML2Text):
                 self.preserved_content.append(f"</{tag}>")
             return
 
+        # Handle div tags
+        if tag in ["div", "footer"] and self.remove_furniture:
+            if start:
+                self.inside_div = True
+                self.div_stack.append(attrs)
+                # Start with no header assumption
+                self.div_has_header.append(False)
+                self.skip_content = True  # Skip content by default
+                return
+            else:
+                if self.div_stack:
+                    self.div_stack.pop()
+                    has_header = self.div_has_header.pop() if self.div_has_header else False
+                    
+                    # Update skip_content based on remaining divs
+                    self.skip_content = any(not header for header in self.div_has_header)
+                    
+                    # Only add paragraph break if div had a header
+                    if has_header:
+                        if self.google_doc:
+                            if self.tag_stack and google_has_height(self.tag_stack[-1][2]):
+                                self.p()
+                            else:
+                                self.soft_br()
+                        elif self.astack:
+                            pass
+                        elif self.split_next_td:
+                            pass
+                        else:
+                            self.p()
+                
+                self.inside_div = len(self.div_stack) > 0
+                return
+
+        # Mark current div and all ancestors as containing a header
+        if hn(tag) and self.div_stack:
+            for i in range(len(self.div_has_header)):
+                self.div_has_header[i] = True
+            self.skip_content = False  # Allow content when header is found
+        
+        # Skip content if we're in a div without header
+        if self.skip_content and self.inside_div:
+            return
+
         # Skip anchor tags when inside code or pre blocks
         if tag == "a" and (self.inside_pre or self.inside_code):
             return
@@ -1236,34 +1285,38 @@ class CustomHTML2Text(HTML2Text):
                 super().handle_tag(tag, attrs, start)
         else:
             super().handle_tag(tag, attrs, start)
-    
+
     def handle_data(self, data, entity_char=False):
         if self.mathjax:
             data = data.strip()
             if not data:
                 return
-            
+
             current_tag = self.stack_tags[-1] if self.stack_tags else None
-            
+
             if current_tag in ["mo", "mi", "mn", "mfrac", "msqrt", "msub", "msup", "mrow", "mtable", "mtr", "mtd"]:
                 self.math_content.append(data)
             return
-        
-        # Handle preserved tags
+
+        """Override handle_data to capture content within preserved tags."""
         if self.preserve_depth > 0:
             self.preserved_content.append(data)
             return
-        
-        if self.inside_pre:
-            # Output the raw content for pre blocks
-            self.o(data)
+
+        # Skip content if we're in a div without header
+        if self.skip_content and self.inside_div and self.remove_furniture:
             return
-        
+
+        if self.inside_pre:
+            # Output the raw content for pre blocks, including content inside code tags
+            self.o(data)  # Directly output the data as-is (preserve newlines)
+            return
+
         if self.inside_code:
             # Inline code: no newlines allowed
             self.o(data.replace("\n", " "))
             return
-        
+
         # Default behavior for other tags
         super().handle_data(data, entity_char)
 
