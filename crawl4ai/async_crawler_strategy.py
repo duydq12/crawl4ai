@@ -440,6 +440,7 @@ class AsyncPlaywrightCrawlerStrategy(AsyncCrawlerStrategy):
         response_headers = {}
         status_code = 200  # Default for local/raw HTML
         screenshot_data = None
+        captured_console = None
 
         if url.startswith(("http://", "https://", "view-source:")):
             return await self._crawl_web(url, config)
