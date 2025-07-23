@@ -139,6 +139,7 @@ class HTML2Text(html.parser.HTMLParser):
         self.preceding_stressed = False
         self.preceding_data = ""
         self.current_tag = ""
+        self.use_title_url = False
 
         config.UNIFIABLE["nbsp"] = "&nbsp_place_holder;"
 
@@ -506,7 +507,10 @@ class HTML2Text(html.parser.HTMLParser):
         def link_url(self: HTML2Text, link: str, title: str = "") -> None:
             url = urlparse.urljoin(self.baseurl, link)
             title = ' "{}"'.format(title) if title.strip() else ""
-            self.o("]({url}{title})".format(url=escape_md(url), title=title))
+            if self.use_title_url:
+                self.o("]({url}{title})".format(url=escape_md(url), title=title))
+            else:
+                self.o("]({url})".format(url=escape_md(url)))
 
         if tag == "a" and not self.ignore_links:
             if start:
